@@ -1,5 +1,4 @@
 import amqp from "amqplib";
-import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,27 +26,28 @@ export const startSendOtpConsumer = async () => {
         try {
           const { to, subject, body } = JSON.parse(msg.content.toString());
 
-          const transporter = nodemailer.createTransport({
-            host: "smtp.gmail.com",
-            port: 465,
-            secure: true, //for aws
-            auth: {
-              user: process.env.USER,
-              pass: process.env.PASSWORD,
+          const webhookUrl = process.env.MAIL_WEBHOOK_URL;
+          if (!webhookUrl) {
+            throw new Error("MAIL_WEBHOOK_URL is not set in environment variables");
+          }
+
+          const response = await fetch(webhookUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
             },
+            body: JSON.stringify({ to, subject, body }),
           });
 
-          await transporter.sendMail({
-            from: "Chat app",
-            to,
-            subject,
-            text: body,
-          });
+          if (!response.ok) {
+            throw new Error(`Webhook failed with status ${response.status}`);
+          }
 
-          console.log(`OTP mail sent to ${to}`);
+          console.log(`✅ OTP mail sent to ${to}`);
           channel.ack(msg);
         } catch (error) {
           console.log("Failed to send otp", error);
+          channel.nack(msg, false, false);
         }
       }
     });
