@@ -6,13 +6,20 @@ import { AuthenticatedRequest } from "../middleware/isAuth.js";
 import { User } from "../model/User.js";
 
 export const loginUser = TryCatch(async (req, res) => {
-  const { email } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
+
+  if (!email) {
+    res.status(400).json({
+      message: "Email is required",
+    });
+    return;
+  }
 
   const rateLimitKey = `otp:ratelimit:${email}`;
   const rateLimit = await redisClient.get(rateLimitKey);
   if (rateLimit) {
     res.status(429).json({
-      message: "Too may requests. Please wait before requesting new opt",
+      message: "Too many requests. Please wait before requesting new otp",
     });
     return;
   }
@@ -34,6 +41,9 @@ export const loginUser = TryCatch(async (req, res) => {
     body: `Your OTP is ${otp}. It is valid for 5 minutes`,
   };
 
+  // Wake up Render free-tier mail service so queued OTP is processed immediately
+  fetch("https://chat-mail-service-zxiw.onrender.com").catch(() => {});
+
   await publishToQueue("send-otp", message);
 
   res.status(200).json({
@@ -42,7 +52,8 @@ export const loginUser = TryCatch(async (req, res) => {
 });
 
 export const verifyUser = TryCatch(async (req, res) => {
-  const { email, otp: enteredOtp } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
+  const enteredOtp = req.body.otp?.toString().trim();
 
   if (!email || !enteredOtp) {
     res.status(400).json({

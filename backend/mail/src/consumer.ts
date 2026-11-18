@@ -33,17 +33,20 @@ export const startSendOtpConsumer = async () => {
 
           const response = await fetch(webhookUrl, {
             method: "POST",
+            redirect: "follow",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ to, subject, body }),
           });
 
+          const resultText = await response.text();
+
           if (!response.ok) {
-            throw new Error(`Webhook failed with status ${response.status}`);
+            throw new Error(`Webhook failed (${response.status}): ${resultText}`);
           }
 
-          console.log(`✅ OTP mail sent to ${to}`);
+          console.log(`✅ OTP mail sent to ${to} | Response: ${resultText}`);
           channel.ack(msg);
         } catch (error) {
           console.log("Failed to send otp", error);
