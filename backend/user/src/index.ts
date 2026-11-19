@@ -12,19 +12,26 @@ connectDb();
 
 connectRabbitMQ();
 
+interface IKvStore {
+  key: string;
+  value: string;
+  expiresAt: Date;
+}
+
 // Persistent MongoDB-backed store with automatic TTL expiry (survives server restarts)
-const kvSchema = new mongoose.Schema({
+const kvSchema = new mongoose.Schema<IKvStore>({
   key: { type: String, required: true, unique: true },
   value: { type: String, required: true },
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
 });
 
 const KvStore =
-  mongoose.models.KvStore || mongoose.model("KvStore", kvSchema);
+  (mongoose.models.KvStore as mongoose.Model<IKvStore>) ||
+  mongoose.model<IKvStore>("KvStore", kvSchema);
 
 export const redisClient = {
   get: async (key: string): Promise<string | null> => {
-    const doc = await KvStore.findOne({ key }).lean();
+    const doc = await KvStore.findOne({ key }).lean<IKvStore>();
     if (!doc) return null;
     if (new Date() > new Date(doc.expiresAt)) {
       await KvStore.deleteOne({ key });
