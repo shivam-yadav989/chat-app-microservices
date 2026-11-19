@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import mongoose from "mongoose";
 import connectDb from "./config/db.js";
 import userRoutes from "./routes/user.js";
 import { connectRabbitMQ } from "./config/rabbitmq.js";
@@ -11,26 +12,43 @@ connectDb();
 
 connectRabbitMQ();
 
-// In-memory store replacing Upstash Redis (zero connection/auth failures)
-const memoryStore = new Map<string, { value: string; expiresAt: number }>();
+// Persistent MongoDB-backed store with automatic TTL expiry (survives server restarts)
+const kvSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: String, required: true },
+  expiresAt: { type: Date, required: true, index: { expires: 0 } },
+});
+
+const KvStore =
+  mongoose.models.KvStore || mongoose.model("KvStore", kvSchema);
 
 export const redisClient = {
-  get: async (key: string) => {
-    const entry = memoryStore.get(key);
-    if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
-      memoryStore.delete(key);
+  get: async (key: string): Promise<string | null> => {
+    const doc = await KvStore.findOne({ key }).lean();
+    if (!doc) return null;
+    if (new Date() > new Date(doc.expiresAt)) {
+      await KvStore.deleteOne({ key });
       return null;
     }
-    return entry.value;
+    return doc.value;
   },
-  set: async (key: string, value: string, options?: { EX?: number }) => {
+  set: async (
+    key: string,
+    value: string,
+    options?: { EX?: number }
+  ): Promise<string> => {
     const ttlMs = (options?.EX ?? 300) * 1000;
-    memoryStore.set(key, { value, expiresAt: Date.now() + ttlMs });
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await KvStore.findOneAndUpdate(
+      { key },
+      { key, value, expiresAt },
+      { upsert: true, new: true }
+    );
     return "OK";
   },
-  del: async (key: string) => {
-    return memoryStore.delete(key) ? 1 : 0;
+  del: async (key: string): Promise<number> => {
+    const res = await KvStore.deleteOne({ key });
+    return res.deletedCount ?? 0;
   },
 };
 
@@ -39,6 +57,10 @@ const app = express();
 app.use(express.json());
 
 app.use(cors());
+
+app.get("/", (_req, res) => {
+  res.status(200).send("User service is running");
+});
 
 app.use("/api/v1", userRoutes);
 
